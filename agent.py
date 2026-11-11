@@ -1,6 +1,7 @@
 """A small, provider-neutral tool-calling loop for the status investigation lab."""
 
 import json
+import os
 
 from status_tools import SCHEMAS
 
@@ -80,7 +81,8 @@ def run_agent(question, provider, tools, max_steps=6):
             answer = _content(message)
             if finish == 'stop':
                 missing = [url for url in sources if url not in answer]
-                if missing:
+                validate_sources = os.getenv('STATUS_VALIDATE_SOURCES', '1') != '0'
+                if missing and validate_sources:
                     trace.append({'event': 'validation_missing_source', 'step': step,
                                   'urls': missing})
                     messages.append({'role': 'user', 'content':
@@ -88,6 +90,9 @@ def run_agent(question, provider, tools, max_steps=6):
                         'observed in tool results: ' + ', '.join(missing)})
                     status = 'max_steps'
                     continue
+                if missing:
+                    trace.append({'event': 'validation_disabled', 'step': step,
+                                  'urls': missing})
                 status = 'completed'
                 break
             status = 'error'

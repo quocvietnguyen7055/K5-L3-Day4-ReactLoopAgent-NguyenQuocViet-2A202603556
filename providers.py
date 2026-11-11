@@ -8,11 +8,26 @@ CONFIG = {
     'openai': ('OPENAI_API_KEY', 'https://api.openai.com/v1/chat/completions'),
     'gemini': ('GEMINI_API_KEY', 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'),
     'openrouter': ('OPENROUTER_API_KEY', 'https://openrouter.ai/api/v1/chat/completions'),
+    'xkiro': ('XKIRO_API_KEY', 'https://api.xkiro.com/v1/chat/completions'),
     'anthropic': ('ANTHROPIC_API_KEY', 'https://api.anthropic.com/v1/messages'),
 }
 
 
 def post_json(url, headers, payload):
+    # xKiro's gateway blocks urllib's default request fingerprint and inherits
+    # stale shell proxies in some lab environments. Use the same OpenAI SDK
+    # transport as its working project adapter, with environment proxies disabled.
+    if url.startswith('https://api.xkiro.com/'):
+        try:
+            import httpx
+            from openai import OpenAI
+            with httpx.Client(trust_env=False, timeout=60.0) as client:
+                sdk = OpenAI(api_key=headers['Authorization'].removeprefix('Bearer '),
+                             base_url=os.getenv('XKIRO_BASE_URL', 'https://api.xkiro.com/v1'),
+                             http_client=client)
+                return sdk.chat.completions.create(**payload).model_dump()
+        except ImportError as exc:
+            raise RuntimeError('xKiro requires the optional openai and httpx packages.') from exc
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', **headers})
     try:
         with urllib.request.urlopen(req, timeout=60) as response:
@@ -50,7 +65,7 @@ class Provider:
         data = post_json(self.url, {'Authorization': f'Bearer {self.key}'}, payload)
         choice = data['choices'][0]
         message = choice['message']
-        calls = [{'id': c['id'], 'name': c['function']['name'], 'arguments': c['function']['arguments']} for c in message.get('tool_calls', [])]
+        calls = [{'id': c['id'], 'name': c['function']['name'], 'arguments': c['function']['arguments']} for c in (message.get('tool_calls') or [])]
         return {'message': message, 'calls': calls, 'finish': choice.get('finish_reason'), 'usage': data.get('usage', {})}
 
     def _anthropic(self, messages, schemas):
